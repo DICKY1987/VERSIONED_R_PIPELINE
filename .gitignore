@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 Organization Name
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+.env
+.env.local
+
+# Nox
+.nox/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Logs and coverage
+*.log
+.coverage
+htmlcov/
+pytest_cache/
+
+# Miscellaneous
+.DS_Store
+*.tmp
+
+# Worktrees and runs
+.runs/

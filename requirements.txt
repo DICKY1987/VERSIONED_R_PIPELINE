@@ -1,0 +1,8 @@
+# ACMS Dependencies
+# Version: 1.0.0
+# Last Updated: 2025-11-02
+# Python 3.11+ Required
+
+nox>=2024.4.15
+pytest>=7.4
+python-dotenv>=1.0
