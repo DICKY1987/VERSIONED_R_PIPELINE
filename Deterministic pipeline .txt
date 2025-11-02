@@ -1,0 +1,96 @@
+Tool Survey: AI Coding CLIs and Their Capabilities
+
+Claude Code CLI (Anthropic) – An agentic command-line coding assistant .  The official repository (anthropics/claude-code ) and docs describe Claude Code as a natural-language interface that understands a codebase and can execute routine coding tasks (e.g. generate functions, refactor code, run tests) . It handles Git workflows (e.g. diff, commit, merging) via built‐in tools and plugins .  Claude Code itself is cross-platform (supports macOS, Linux, Windows) and language-agnostic; it can read/edit code in Python and PowerShell just as any other file (the repo even contains Python and PowerShell code) .  Orchestration: Claude Code is single-threaded and interactive – it only runs one agent/task at a time in a given session.  (Parallel usage requires running multiple independent instances, e.g. in separate worktrees or containers.)  Git Integration: Native – Claude Code can run Git commands (e.g. git log, git diff, branching) as tools .  Limitations: Requires internet access to Anthropic’s API (no offline mode); context length limits; and, as noted by users, “you can only run one task at a time” without external orchestration .
+
+Gemini CLI (Google) – The open-source google-gemini/gemini-cli brings Google’s Gemini LLM to your terminal . It is a Node/TypeScript REPL that provides “lightweight access” to Gemini, with built-in tools for file I/O, shell commands, web search, etc.  . In practice it can query or edit multi-file codebases (including Python or PowerShell scripts) by issuing file-system read/write commands to the LLM.  Orchestration: Like Claude, it runs one interactive session at a time (no inherent parallelism) but supports “non-interactive” script mode and checkpointing.  Git Integration: Indirect – Gemini CLI itself does not embed Git operations, but Google provides a [Gemini CLI GitHub Action] for CI workflows . The CLI can execute shell/git commands if prompted (via its shell tool), but it has no special merge/worktree features.  Limitations: Uses Google’s cloud API (free tier limits apply) and thus requires internet; model-specific context window (up to 1M tokens on Gemini 2.5 Pro) ; no offline mode without a local Gemini server.
+
+Ollama CLI – The ollama/ollama tool is a local LLM host and manager . It is not itself a coding agent but a CLI to download, run, and manage open-source models (Llama, Phi, DeepSeek, Gemma, etc.) locally . Ollama supports offline use of code-capable LLMs (e.g. DeepSeek, CodeLlama). It provides commands to create/pull models and run them via a local REST API .  Supports Python/PowerShell: Ollama itself doesn’t “edit” code, but you can run any model that can. For example, it can load DeepSeek-R1 which excels at code editing .  Orchestration: Ollama can serve multiple models concurrently (via ollama run sessions), but it has no built-in multi-agent orchestration – it’s essentially a model runtime.  Git Integration: None – it treats files as generic data.  Limitations: Requires substantial local resources (models use many GB of RAM/disk) ; initial model downloads can be large; local-only (no cloud fallback).
+
+OpenAI Codex CLI – The openai/codex tool (Docs: codex/cli ) is an open-source Rust-based coding agent similar to Claude Code . It runs locally from the terminal and “can read, modify, and run code on your machine” . Codex CLI supports macOS/Linux (Windows via WSL) .  It provides an interactive UI to ask natural-language prompts; it will parse code files, apply edits, and even execute commands on the host. This means it can handle Python or PowerShell scripts as well as other languages (it is language-agnostic). Orchestration: Codex is interactive by default. It also offers a non-interactive “codex exec” mode for scripted tasks . It does not natively schedule parallel tasks, though one can invoke multiple CLI processes separately.  Git Integration: No special Git features – it can of course run Git commands if the underlying LLM is prompted to do so, but there is no built-in merge/workflow logic.  Limitations: Requires internet/ChatGPT account (OpenAI API) with appropriate plan (Pro/Team for Codex) ; cannot run offline; context limited by model used.
+
+Aider (with DeepSeek via Ollama) – Aider is an open-source CLI “AI pair programmer” written in Python . It integrates with many LLMs (OpenAI, Anthropic, Gemini, etc.) and can also use local models via Ollama . Aider is explicitly designed to edit code in a local Git repo – it maps your codebase, suggests edits, and auto-commits changes with sensible messages . It supports “100+ code languages: python, javascript, rust, …”  (Python is 80% of its codebase ). It does not specifically target PowerShell, but since it uses LLM edits it can generate any text-based code. Orchestration: Aider runs one conversation/session per invocation; no built-in parallel tasking.  Git Integration: Strong – Aider automatically creates commits, and you can use standard Git commands to review or revert AI changes .  Offline: Yes, if you use Aider with a local model (e.g. DeepSeek via Ollama) it can function entirely offline. Limitations: Depends on model quality; weaker models (e.g. free GPT-3.5) may fail to produce proper code edits . Its Git commits use the running HEAD; it has no special merge strategy.
+
+GitHub Copilot CLI – The github/copilot-cli brings GitHub Copilot’s coding agent to the terminal . It is Node-based, supports Linux/macOS/Windows , and authenticates to a Copilot subscription. Copilot CLI can build, edit, debug, and refactor code with natural-language commands . It “knows your repositories, issues, and pull requests” for context , since it integrates with GitHub’s ecosystem. Supports all code languages (undoubtedly Python and PowerShell included), as it functions like an AI collaborator; it can even use PowerShell prompts on Windows. Orchestration: The agent runs interactively; it is described as agentic and can plan/execute complex tasks . It has no built-in job queue or parallelism beyond manual spawn of sessions.  Git Integration: Deep – Copilot CLI is “GitHub-native”: it auto-authenticates with your GitHub account, can fetch issues/PRs, and uses the Git repo context. It runs entirely in your local folder and can create branches, make commits, and open pull requests (with explicit user approval) . It supports a Model Context Protocol (MCP) server for custom tools. Limitations: Requires a paid Copilot subscription; no offline mode; still in public preview (features may change).
+
+Pipeline Architecture (Modular, Headless, Deterministic)
+
+The proposed pipeline is manifest-driven and Git-centric. A high-level architecture is: a Pipeline Orchestrator parses a structured input file (e.g. a YAML change plan) and spawns isolated workstreams for each task via Git worktrees. Each workstream is a separate branch in the same repo (checked out into its own directory) . The orchestrator dispatches subtasks to the most suitable tool agents:
+	•	Planning Tasks: Use Claude Code or Copilot CLI for high-level planning, outline generation, or branching strategies (both can discuss or enumerate tasks with natural prompts). Gemini CLI could serve similar query/analysis roles. These tools refine the change plan, splitting it into sub-steps.
+	•	Editing Tasks: Use Aider (with a chosen LLM) to implement code changes (it auto-commits), or Codex CLI/Copilot CLI to write/debug code. For Python/PowerShell scripts, Aider is ideal (it’s proven for code edits) ; Copilot CLI or Claude Code can be fallback editors. Ollama (with DeepSeek) can be used in offline mode or as a fast local model via Aider.
+	•	Validation Tasks: Use shell tools (even Claude or Gemini) to run linters/tests as steps. These can be part of each workstream’s flow.
+	•	Merge/QA Tasks: Once a workstream completes, automated rules (per the deterministic merge policy) merge it back to the main branch. The orchestrator triggers the deterministic merge train to combine branches in a reproducible way .
+
+Key aspects:
+	•	Parallel Workstreams via Git Worktrees: Each subtask is executed in a separate worktree/branch, providing full isolation of file states . As shown in [57], “Git worktrees solve [context switching] by letting you run multiple … sessions in parallel, each with its own isolated context” . This allows true simultaneous work (e.g. feature-X and feature-Y branches can be worked by different agents concurrently, each with a full code context).
+	•	Deterministic Merges: We use a policy-based merge-train (per .merge-policy.yaml) as in the Deterministic Git Workflow . Merges and rebases apply pre-configured strategies by file type (JSON, YAML, lockfiles, etc.), run tests/lints, and only push when all gates pass  . All merge decisions are logged in structured JSONL for audit . This ensures the pipeline is fully reproducible (“free of arbitrary human variation” ) and transparent.
+
+
+Execution Flow
+
+The pipeline runs in phases:
+	1.	Input & Planning: The orchestrator reads a structured change plan (e.g. YAML or JSON manifest) specifying tasks and target files. It may prompt Claude Code or Copilot CLI to expand or verify this plan (e.g. break a large change into smaller subtasks)  . The result is a set of parallel sub-tasks (e.g. “add feature X to module.py”, “update script for config Y”).
+	2.	Spawn Workstreams: For each sub-task, create a new Git branch and check it out into a separate worktree directory. This isolates the environment: each worktree sees only its branch’s files, while sharing the common .git history . (For example, worktree/feature-X on branch feature/X, worktree/feature-Y on feature/Y.)
+	3.	Parallel Task Execution: In each worktree, the orchestrator invokes tools as needed:
+	•	Editing agents: e.g. run aider --model deepseek --api-key ... (Aider) or copilot chat in that directory to implement code changes. The agent reads context and returns edits which are applied to files. Each tool may prompt for approval before committing.
+	•	Language support: Ensure that any Python or PowerShell tasks (scripts or modules) are handled by the agent. For example:
+
+cd worktree/feature-X
+# If the task is to write a PowerShell script, use Copilot CLI:
+copilot ask "Write a PowerShell script to ... " --allow-scripts
+# Or use Aider if using a local model:
+aider --model deepseek "Refactor this Python function..." 
+
+
+Testing/linting: After edits, run linters or tests (via shell or CLI tool) to verify correctness. Agents may self-test code if configured (Copilot CLI can run tests as part of a conversation).
+	•	Commit Changes: Each agent commits its changes with a natural-language message (Aider does this automatically ). This produces one or more commits on the worktree branch.
+Example: Suppose the plan says “Update compute.py to use new API.” The orchestrator might launch Aider in the feature/update-compute worktree. Aider produces a patch updating compute.py and commits it with a message “Refactor compute.py to call new API endpoint.” The branch now contains the updated code.
+
+	4.	Merge Train: Once all workstreams finish, the pipeline performs an automated merge train (using the deterministic merge rules ):
+	•	Each feature branch is rebased/merged onto main in a defined order (e.g. by priority or queue order).
+	•	Custom merge drivers (for JSON/YAML) and rerere are used to resolve trivial conflicts according to policy  .
+	•	After merging each branch, post-merge checks run (schema validation, tests) .
+	•	All actions (decisions, conflict counts, policies applied) are logged as JSONL for audit .
+	•	If a merge fails policy or tests, the branch is quarantined for manual review (and the JSONL logs record this).
+	5.	Completion: Successful merges update the main branch. The pipeline reports results (e.g. via console or writing to a log file). The process is fully headless and repeatable: the same manifest yields identical commits and merges.
+
+Git Integration Strategy
+
+We leverage Git worktrees for isolation . Each parallel workstream gets its own worktree directory with its own checked-out branch . This preserves each AI agent’s context and prevents “context loss” when switching branches . The merged .git repository remains the single source of truth. Our merge policy (in .merge-policy.yaml and .gitattributes) enforces deterministic strategies by file type . For example, JSON/YAML changes can use structure-aware merges, lockfiles may use “theirs” strategy, etc. The pipeline’s PowerShell scripts (or Python) configure Git (git config rerere, custom drivers) exactly as specified in the repository , ensuring local and CI merges behave identically. All merges are done via the CI “merge-train” workflow  so that the integration is fully automated. Audit logs (JSONL) track every merge step .
+
+Execution Flow Example
+
+
+tasks:
+  - id: TID-001
+    branch: feature/add-logging
+    description: "Add logging to data_processor.py"
+    files: ["src/data_processor.py"]
+  - id: TID-002
+    branch: feature/fix-config
+    description: "Update config.ps1 defaults"
+    files: ["scripts/setup/config.ps1"]
+
+
+
+The orchestrator reads this, then spawns two branches/worktrees: feature/add-logging and feature/fix-config.
+
+Task TID-001 (Python): The orchestrator runs aider in the feature/add-logging worktree. Aider uses DeepSeek to edit data_processor.py, adding logging statements where needed. Aider applies and commits the patch.
+Output (commit in branch): “Enable detailed logging in data_processor.py (added logger.info calls).”
+
+Task TID-002 (PowerShell): The orchestrator runs Copilot CLI in the feature/fix-config worktree with a prompt to update default values. Copilot CLI edits config.ps1 accordingly and commits “Change default config values for stability.”.
+
+After these, the merge-train rebases each branch, merges with main, and runs tests. Since no conflicts arose, both merges succeed and main is updated with the new logging code and config script.
+
+Fallback Logic
+
+To ensure resilience, the orchestrator checks tool availability and degrades gracefully:
+	•	If Copilot CLI is unreachable or no license, fall back to Claude Code (Anthropic) or Gemini CLI for task planning and edits.
+	•	If Claude/cloud models have latency issues, fall back to Aider with a local model (DeepSeek via Ollama) for critical edits (since Aider can run offline) .
+	•	If Aider (local model) fails to produce coherent edits, the pipeline can switch to Codex CLI or Copilot CLI if available.
+	•	If network/API is down, the pipeline runs only local components (Ollama/Aider) and flags tasks that require cloud. For example, try ollama run deepseek to generate text if cloud is off.
+	•	All fallback decisions are logged. The pipeline ensures that at least one agent (cloud or local) is attempted for each subtask before marking it failed.
+	•	Errors in one branch do not block others: each workstream is isolated, so one agent’s unavailability only affects that branch.
+
+Throughout, the pipeline remains deterministic and auditable: every action (agent used, model choice, fallback invoked) is recorded. Using Git worktrees and scripted CI merges ensures that the process can be replayed exactly as configured.
+
+Sources: Official tool docs and repos provide these details (e.g. Claude Code CLI on GitHub , Gemini CLI docs , Ollama README , Aider GitHub , OpenAI Codex docs , Copilot CLI README ), as well as best-practice analysis of Git workflows  . Each citation above links to the authoritative source.
