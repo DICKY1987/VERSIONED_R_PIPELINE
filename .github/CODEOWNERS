@@ -1,0 +1,23 @@
+# ACMS Code Ownership
+# Version: 1.0.0
+# Date: 2025-11-02
+
+# Default owner for all files
+* @platform-engineering
+
+# Documentation collections
+/docs/** @team-docs
+/plans/** @team-pmo
+
+# Governance and execution contracts
+/ACMS_BUILD_EXECUTION_CONTRACT.yaml @team-compliance @platform-engineering
+/ACMS_EXECUTIVE_SUMMARY.md @platform-engineering @team-pmo
+/Supplemental\ Development\ Plan\ for\ ACMS_EXECUTIVE_SUMMARY.docx @team-pmo @platform-engineering
+/VERSIONING_OPERATING_CONTRACT.md @team-compliance @platform-engineering
+
+# Workflow protections
+/.github/workflows/** @platform-engineering
+/.github/CODEOWNERS @team-compliance @platform-engineering
+
+# Deterministic merge policy files
+/.gitattributes @platform-engineering
