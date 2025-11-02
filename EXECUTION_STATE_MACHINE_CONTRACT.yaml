@@ -1,0 +1,392 @@
+---
+doc_key: EXECUTION_STATE_MACHINE
+semver: 1.0.0
+status: active
+effective_date: 2025-11-02
+supersedes_version: null
+owner: Platform.Engineering
+contract_type: policy
+---
+
+# Execution State Machine & Task DAG Contract
+
+## Purpose
+Defines the state machine for workflow execution and task dependency resolution.
+Addresses the need for deterministic retry, resumption, and ordering.
+
+## State Machine Definition
+
+### Execution States
+```yaml
+states:
+  PENDING:
+    description: "Task defined but not started"
+    allowed_transitions: [RUNNING, SKIPPED, CANCELLED]
+    
+  RUNNING:
+    description: "Task currently executing"
+    allowed_transitions: [COMPLETED, FAILED, CANCELLED]
+    entry_actions:
+      - generate_trace_id
+      - log_start_event
+      - acquire_resources
+    
+  COMPLETED:
+    description: "Task finished successfully"
+    allowed_transitions: []
+    entry_actions:
+      - log_completion_event
+      - release_resources
+      - trigger_dependent_tasks
+    
+  FAILED:
+    description: "Task failed validation or execution"
+    allowed_transitions: [PENDING, CANCELLED]
+    entry_actions:
+      - log_failure_event
+      - release_resources
+      - checkpoint_rollback
+      - evaluate_retry_policy
+    retry_policy:
+      max_attempts: 3
+      backoff_strategy: exponential
+      backoff_base_seconds: 60
+    
+  SKIPPED:
+    description: "Task skipped due to conditional logic"
+    allowed_transitions: []
+    
+  CANCELLED:
+    description: "Task cancelled by user or system"
+    allowed_transitions: []
+```
+
+### State Transition Rules
+```python
+# core/state_machine.py
+from enum import Enum, auto
+from typing import Dict, List, Optional
+from dataclasses import dataclass
+import ulid
+
+class ExecutionState(Enum):
+    PENDING = auto()
+    RUNNING = auto()
+    COMPLETED = auto()
+    FAILED = auto()
+    SKIPPED = auto()
+    CANCELLED = auto()
+
+@dataclass
+class TaskExecution:
+    task_id: str
+    state: ExecutionState
+    trace_id: str
+    attempt: int = 0
+    max_attempts: int = 3
+    dependencies: List[str] = None
+    
+    def can_transition_to(self, new_state: ExecutionState) -> bool:
+        """Validate state transition according to state machine"""
+        transitions = {
+            ExecutionState.PENDING: [ExecutionState.RUNNING, ExecutionState.SKIPPED, ExecutionState.CANCELLED],
+            ExecutionState.RUNNING: [ExecutionState.COMPLETED, ExecutionState.FAILED, ExecutionState.CANCELLED],
+            ExecutionState.COMPLETED: [],
+            ExecutionState.FAILED: [ExecutionState.PENDING, ExecutionState.CANCELLED],
+            ExecutionState.SKIPPED: [],
+            ExecutionState.CANCELLED: []
+        }
+        return new_state in transitions.get(self.state, [])
+```
+
+## Task Dependency Graph (DAG)
+
+### DAG Schema
+```yaml
+task_graph:
+  version: "1.0.0"
+  tasks:
+    - id: "task_001_preflight"
+      dependencies: []
+      priority: 1
+      
+    - id: "task_002_run_init"
+      dependencies: ["task_001_preflight"]
+      priority: 2
+      
+    - id: "task_003_planning"
+      dependencies: ["task_002_run_init"]
+      priority: 3
+      
+    - id: "task_004_worktree_a"
+      dependencies: ["task_003_planning"]
+      priority: 4
+      parallel_group: "worktrees"
+      
+    - id: "task_005_worktree_b"
+      dependencies: ["task_003_planning"]
+      priority: 4
+      parallel_group: "worktrees"
+      
+    - id: "task_006_merge_prep"
+      dependencies: ["task_004_worktree_a", "task_005_worktree_b"]
+      priority: 5
+```
+
+### DAG Execution Algorithm
+```python
+# core/task_scheduler.py
+from collections import defaultdict, deque
+from typing import List, Set, Dict
+
+class TaskScheduler:
+    """
+    Topological sort + parallel group execution for task DAG.
+    Ensures dependencies are respected while maximizing parallelism.
+    """
+    
+    def __init__(self, task_graph: Dict):
+        self.tasks = {t['id']: t for t in task_graph['tasks']}
+        self.graph = self._build_adjacency_list()
+        
+    def _build_adjacency_list(self) -> Dict[str, List[str]]:
+        """Build dependency graph"""
+        graph = defaultdict(list)
+        for task_id, task in self.tasks.items():
+            for dep in task.get('dependencies', []):
+                graph[dep].append(task_id)
+        return graph
+    
+    def topological_sort(self) -> List[List[str]]:
+        """
+        Returns list of execution waves (parallel groups).
+        Each wave can execute concurrently.
+        """
+        in_degree = defaultdict(int)
+        for task_id, task in self.tasks.items():
+            for dep in task.get('dependencies', []):
+                in_degree[task_id] += 1
+        
+        # Find all tasks with no dependencies
+        queue = deque([t for t in self.tasks if in_degree[t] == 0])
+        waves = []
+        
+        while queue:
+            # Current wave (can execute in parallel)
+            current_wave = []
+            wave_size = len(queue)
+            
+            for _ in range(wave_size):
+                task_id = queue.popleft()
+                current_wave.append(task_id)
+                
+                # Update in-degrees of dependent tasks
+                for dependent in self.graph[task_id]:
+                    in_degree[dependent] -= 1
+                    if in_degree[dependent] == 0:
+                        queue.append(dependent)
+            
+            waves.append(current_wave)
+        
+        # Validate no cycles
+        if sum(len(wave) for wave in waves) != len(self.tasks):
+            raise ValueError("Cycle detected in task graph")
+        
+        return waves
+    
+    def get_execution_plan(self) -> Dict:
+        """
+        Generate execution plan with wave/parallel group info.
+        """
+        waves = self.topological_sort()
+        return {
+            "total_tasks": len(self.tasks),
+            "total_waves": len(waves),
+            "max_parallelism": max(len(wave) for wave in waves),
+            "execution_order": [
+                {
+                    "wave": i,
+                    "tasks": wave,
+                    "can_parallel": len(wave) > 1
+                }
+                for i, wave in enumerate(waves, 1)
+            ]
+        }
+```
+
+### Retry Policy Implementation
+```python
+# core/retry_handler.py
+import time
+from typing import Callable, Optional
+
+class RetryPolicy:
+    """Implements exponential backoff with jitter"""
+    
+    def __init__(
+        self,
+        max_attempts: int = 3,
+        backoff_base_seconds: int = 60,
+        strategy: str = "exponential"
+    ):
+        self.max_attempts = max_attempts
+        self.backoff_base = backoff_base_seconds
+        self.strategy = strategy
+    
+    def calculate_delay(self, attempt: int) -> int:
+        """Calculate delay before next retry"""
+        if self.strategy == "exponential":
+            # 60s, 120s, 240s, etc.
+            return self.backoff_base * (2 ** (attempt - 1))
+        elif self.strategy == "linear":
+            # 60s, 120s, 180s, etc.
+            return self.backoff_base * attempt
+        else:
+            return self.backoff_base
+    
+    def should_retry(self, task: TaskExecution) -> bool:
+        """Determine if task should retry"""
+        return (
+            task.state == ExecutionState.FAILED and
+            task.attempt < self.max_attempts
+        )
+    
+    def execute_with_retry(
+        self,
+        task_id: str,
+        func: Callable,
+        *args,
+        **kwargs
+    ) -> Optional[any]:
+        """Execute function with retry logic"""
+        task = TaskExecution(
+            task_id=task_id,
+            state=ExecutionState.PENDING,
+            trace_id=str(ulid.new())
+        )
+        
+        for attempt in range(1, self.max_attempts + 1):
+            task.attempt = attempt
+            task.state = ExecutionState.RUNNING
+            
+            try:
+                result = func(*args, **kwargs)
+                task.state = ExecutionState.COMPLETED
+                return result
+            
+            except Exception as e:
+                task.state = ExecutionState.FAILED
+                
+                if not self.should_retry(task):
+                    raise
+                
+                delay = self.calculate_delay(attempt)
+                print(f"Task {task_id} failed (attempt {attempt}/{self.max_attempts}). Retrying in {delay}s...")
+                time.sleep(delay)
+        
+        raise RuntimeError(f"Task {task_id} failed after {self.max_attempts} attempts")
+```
+
+## Resumption After Failure
+
+### Checkpoint Format
+```json
+{
+  "run_id": "01JAF...",
+  "checkpoint_id": "01JAG...",
+  "timestamp": "2025-11-02T14:30:00Z",
+  "last_completed_task": "task_004_worktree_a",
+  "pending_tasks": ["task_005_worktree_b", "task_006_merge_prep"],
+  "failed_tasks": ["task_007_validate"],
+  "task_states": {
+    "task_001_preflight": "COMPLETED",
+    "task_002_run_init": "COMPLETED",
+    "task_003_planning": "COMPLETED",
+    "task_004_worktree_a": "COMPLETED",
+    "task_005_worktree_b": "PENDING",
+    "task_006_merge_prep": "PENDING",
+    "task_007_validate": "FAILED"
+  },
+  "can_resume": true
+}
+```
+
+### Resume Command
+```bash
+# Resume from last checkpoint
+python core/orchestrator.py --resume --run-id 01JAF...
+
+# Resume from specific checkpoint
+python core/orchestrator.py --resume --checkpoint-id 01JAG...
+
+# Resume with specific task override
+python core/orchestrator.py --resume --run-id 01JAF... --skip task_007_validate
+```
+
+## Integration with Workflow.docx
+
+### Mapping to 12-Step Pipeline
+```yaml
+workflow_steps_to_tasks:
+  step_00_preflight: "task_001_preflight"
+  step_01_run_init: "task_002_run_init"
+  step_02_planning: "task_003_planning"
+  step_03_worktrees: ["task_004_worktree_a", "task_005_worktree_b"]  # Parallel
+  step_04_execute: ["task_006_execute_a", "task_007_execute_b"]      # Parallel
+  step_05_code_gate: ["task_008_gate_a", "task_009_gate_b"]         # Parallel
+  step_06_consume: ["task_010_consume_a", "task_011_consume_b"]     # Parallel
+  step_07_validate: ["task_012_validate_a", "task_013_validate_b"]  # Parallel
+  step_08_merge_prep: "task_014_merge_prep"
+  step_09_merge: "task_015_merge"
+  step_10_pr_ci: "task_016_pr_ci"
+  step_11_ship: "task_017_ship"
+  step_12_archive: "task_018_archive"
+```
+
+## Validation Requirements
+
+Every task execution MUST:
+1. ✅ Have unique task_id + trace_id
+2. ✅ Log state transitions to JSONL
+3. ✅ Validate dependencies satisfied before RUNNING
+4. ✅ Create checkpoint on COMPLETED
+5. ✅ Support rollback on FAILED
+6. ✅ Respect retry policy limits
+7. ✅ Release resources on terminal states
+
+## Testing Requirements
+
+```python
+# tests/test_state_machine.py
+def test_state_transition_validation():
+    task = TaskExecution(task_id="test", state=ExecutionState.PENDING)
+    assert task.can_transition_to(ExecutionState.RUNNING) == True
+    assert task.can_transition_to(ExecutionState.COMPLETED) == False
+
+def test_dag_topological_sort():
+    graph = {
+        'tasks': [
+            {'id': 'A', 'dependencies': []},
+            {'id': 'B', 'dependencies': ['A']},
+            {'id': 'C', 'dependencies': ['A']},
+            {'id': 'D', 'dependencies': ['B', 'C']}
+        ]
+    }
+    scheduler = TaskScheduler(graph)
+    waves = scheduler.topological_sort()
+    
+    assert waves[0] == ['A']
+    assert set(waves[1]) == {'B', 'C'}  # Can run in parallel
+    assert waves[2] == ['D']
+
+def test_retry_policy_exponential_backoff():
+    policy = RetryPolicy(max_attempts=3, backoff_base_seconds=10)
+    assert policy.calculate_delay(1) == 10
+    assert policy.calculate_delay(2) == 20
+    assert policy.calculate_delay(3) == 40
+```
+
+---
+
+## Change Log
+- **1.0.0** — 2025-11-02 — Initial state machine and DAG contract

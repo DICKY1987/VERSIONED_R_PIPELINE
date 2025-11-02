@@ -1,0 +1,517 @@
+---
+doc_key: CONTEXT_BROKER
+semver: 1.0.0
+status: active
+effective_date: 2025-11-02
+supersedes_version: null
+owner: Platform.Engineering
+contract_type: policy
+---
+
+# Context Broker Contract
+
+## Purpose
+Defines the intelligent context filtering system that pre-selects relevant files
+for LLM agents, protecting token budgets while maximizing edit precision.
+
+## Problem Statement
+
+**Without context filtering:**
+- Claude Code context window: ~200k tokens ≈ 150k words ≈ 600 files
+- Aider context: ~100k tokens ≈ 75k words ≈ 300 files
+- Large codebases easily exceed these limits
+- Irrelevant files waste tokens and confuse models
+
+**With context broker:**
+- Intelligent pre-filtering based on task type
+- Dependency analysis for related files
+- Relevance scoring with configurable thresholds
+- Token budget enforcement
+
+## Context Broker Architecture
+
+### Component Structure
+```
+core/
+├── context_broker.py         # Main broker orchestrator
+├── analyzers/
+│   ├── dependency_analyzer.py   # Import/dependency graph
+│   ├── semantic_analyzer.py     # Code similarity scoring
+│   └── path_analyzer.py         # File path relevance
+└── filters/
+    ├── token_budget_filter.py   # Hard token limits
+    ├── relevance_filter.py      # Scoring threshold
+    └── exclude_filter.py        # Blocklist patterns
+```
+
+### Broker Interface
+```python
+# core/context_broker.py
+from typing import List, Dict, Set
+from pathlib import Path
+from dataclasses import dataclass
+import tiktoken
+
+@dataclass
+class ContextRequest:
+    """Request for filtered context"""
+    task_id: str
+    task_type: str  # "edit", "analyze", "plan", "test"
+    target_files: List[Path]  # Files explicitly mentioned in task
+    keywords: List[str]  # Search terms (optional)
+    max_tokens: int = 50000  # Default budget
+    include_dependencies: bool = True
+    include_tests: bool = True
+
+@dataclass
+class ContextResult:
+    """Filtered context with metadata"""
+    files: List[Path]
+    total_tokens: int
+    relevance_scores: Dict[Path, float]
+    dependency_graph: Dict[Path, Set[Path]]
+    excluded_files: List[Path]
+    truncated: bool
+
+class ContextBroker:
+    """
+    Intelligent context filtering for LLM agents.
+    Pre-selects relevant files to fit within token budgets.
+    """
+    
+    def __init__(self, repo_root: Path, model: str = "gpt-4"):
+        self.repo_root = repo_root
+        self.encoding = tiktoken.encoding_for_model(model)
+        self.dependency_analyzer = DependencyAnalyzer(repo_root)
+        self.semantic_analyzer = SemanticAnalyzer(repo_root)
+        
+    def get_context(self, request: ContextRequest) -> ContextResult:
+        """
+        Main entry point: filter files for LLM agent.
+        
+        Algorithm:
+        1. Start with target files (mandatory)
+        2. Add direct dependencies (if enabled)
+        3. Add semantically similar files (scored)
+        4. Add test files (if enabled)
+        5. Apply token budget filter
+        6. Sort by relevance score
+        """
+        mandatory_files = set(request.target_files)
+        optional_files = set()
+        
+        # Step 1: Add dependencies
+        if request.include_dependencies:
+            for target in mandatory_files:
+                deps = self.dependency_analyzer.get_dependencies(target)
+                optional_files.update(deps)
+        
+        # Step 2: Semantic search (if keywords provided)
+        if request.keywords:
+            similar = self.semantic_analyzer.find_similar(
+                request.keywords,
+                exclude=mandatory_files
+            )
+            optional_files.update(similar)
+        
+        # Step 3: Add tests
+        if request.include_tests:
+            for target in mandatory_files:
+                test_file = self._find_test_file(target)
+                if test_file:
+                    optional_files.add(test_file)
+        
+        # Step 4: Score and filter by token budget
+        return self._apply_budget_filter(
+            mandatory=list(mandatory_files),
+            optional=list(optional_files),
+            max_tokens=request.max_tokens
+        )
+    
+    def _count_tokens(self, file_path: Path) -> int:
+        """Count tokens in a file"""
+        try:
+            content = file_path.read_text(encoding='utf-8')
+            return len(self.encoding.encode(content))
+        except:
+            return 0
+    
+    def _apply_budget_filter(
+        self,
+        mandatory: List[Path],
+        optional: List[Path],
+        max_tokens: int
+    ) -> ContextResult:
+        """
+        Apply token budget, preferring high-relevance files.
+        Mandatory files always included (even if exceeding budget).
+        """
+        # Count mandatory files
+        mandatory_tokens = sum(self._count_tokens(f) for f in mandatory)
+        remaining_budget = max_tokens - mandatory_tokens
+        
+        # Score optional files
+        scored_optional = [
+            (f, self._calculate_relevance(f))
+            for f in optional
+        ]
+        scored_optional.sort(key=lambda x: x[1], reverse=True)
+        
+        # Add optional files until budget exhausted
+        included_optional = []
+        used_tokens = mandatory_tokens
+        
+        for file, score in scored_optional:
+            file_tokens = self._count_tokens(file)
+            if used_tokens + file_tokens <= max_tokens:
+                included_optional.append(file)
+                used_tokens += file_tokens
+            else:
+                break
+        
+        all_included = mandatory + included_optional
+        excluded = [f for f, _ in scored_optional if f not in included_optional]
+        
+        return ContextResult(
+            files=all_included,
+            total_tokens=used_tokens,
+            relevance_scores={f: s for f, s in scored_optional},
+            dependency_graph=self.dependency_analyzer.get_graph(all_included),
+            excluded_files=excluded,
+            truncated=(used_tokens >= max_tokens)
+        )
+    
+    def _calculate_relevance(self, file: Path) -> float:
+        """
+        Calculate relevance score (0.0 - 1.0).
+        Higher score = more relevant.
+        """
+        score = 0.0
+        
+        # Recency bonus (recently modified files more relevant)
+        import time
+        mtime = file.stat().st_mtime
+        age_days = (time.time() - mtime) / 86400
+        recency_score = max(0, 1 - (age_days / 30))  # Decay over 30 days
+        score += recency_score * 0.3
+        
+        # Size penalty (huge files less relevant)
+        size_kb = file.stat().st_size / 1024
+        if size_kb < 50:
+            size_score = 1.0
+        elif size_kb < 200:
+            size_score = 0.7
+        else:
+            size_score = 0.3
+        score += size_score * 0.2
+        
+        # Path depth penalty (deeply nested files less relevant)
+        depth = len(file.relative_to(self.repo_root).parts)
+        depth_score = max(0, 1 - (depth / 10))
+        score += depth_score * 0.1
+        
+        # File type bonus
+        if file.suffix in ['.py', '.ps1']:
+            score += 0.4  # Core code files prioritized
+        elif file.suffix in ['.md', '.txt']:
+            score += 0.1  # Docs lower priority
+        
+        return min(1.0, score)
+    
+    def _find_test_file(self, source_file: Path) -> Optional[Path]:
+        """Find corresponding test file"""
+        # Pattern: src/module.py -> tests/test_module.py
+        rel_path = source_file.relative_to(self.repo_root)
+        test_path = self.repo_root / "tests" / f"test_{rel_path.name}"
+        return test_path if test_path.exists() else None
+
+
+# core/analyzers/dependency_analyzer.py
+class DependencyAnalyzer:
+    """
+    Analyze import dependencies between files.
+    Builds directed graph of file dependencies.
+    """
+    
+    def __init__(self, repo_root: Path):
+        self.repo_root = repo_root
+        self._cache = {}  # Path -> Set[Path]
+    
+    def get_dependencies(self, file: Path, max_depth: int = 2) -> Set[Path]:
+        """
+        Get all files this file imports (transitive up to max_depth).
+        
+        For Python: Parse `import` and `from ... import` statements
+        For PowerShell: Parse `. Source-File.ps1` and `Import-Module`
+        """
+        if file in self._cache:
+            return self._cache[file]
+        
+        deps = set()
+        
+        if file.suffix == '.py':
+            deps = self._analyze_python_imports(file)
+        elif file.suffix == '.ps1':
+            deps = self._analyze_powershell_imports(file)
+        
+        # Recursive transitive dependencies (up to max_depth)
+        if max_depth > 1:
+            for dep in list(deps):
+                deps.update(self.get_dependencies(dep, max_depth - 1))
+        
+        self._cache[file] = deps
+        return deps
+    
+    def _analyze_python_imports(self, file: Path) -> Set[Path]:
+        """Extract Python import statements"""
+        import ast
+        deps = set()
+        
+        try:
+            tree = ast.parse(file.read_text())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        dep_path = self._resolve_python_module(alias.name)
+                        if dep_path:
+                            deps.add(dep_path)
+                
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        dep_path = self._resolve_python_module(node.module)
+                        if dep_path:
+                            deps.add(dep_path)
+        except:
+            pass  # Syntax error, skip
+        
+        return deps
+    
+    def _resolve_python_module(self, module_name: str) -> Optional[Path]:
+        """Convert module name to file path"""
+        # Example: "core.plugin_loader" -> "core/plugin_loader.py"
+        rel_path = Path(module_name.replace('.', '/') + '.py')
+        full_path = self.repo_root / rel_path
+        return full_path if full_path.exists() else None
+    
+    def _analyze_powershell_imports(self, file: Path) -> Set[Path]:
+        """Extract PowerShell dot-sourcing and imports"""
+        import re
+        deps = set()
+        
+        try:
+            content = file.read_text()
+            
+            # Pattern: . "$PSScriptRoot\Utils.ps1"
+            dot_source_pattern = r'\.\s+["\']([^"\']+\.ps1)["\']'
+            for match in re.finditer(dot_source_pattern, content):
+                dep_path = self._resolve_powershell_path(file, match.group(1))
+                if dep_path:
+                    deps.add(dep_path)
+            
+            # Pattern: Import-Module CoreModule
+            import_pattern = r'Import-Module\s+([A-Za-z0-9_]+)'
+            for match in re.finditer(import_pattern, content):
+                # Would need module registry to resolve
+                pass
+        except:
+            pass
+        
+        return deps
+    
+    def get_graph(self, files: List[Path]) -> Dict[Path, Set[Path]]:
+        """Build dependency graph for a set of files"""
+        return {f: self.get_dependencies(f) for f in files}
+
+
+# core/analyzers/semantic_analyzer.py
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+
+class SemanticAnalyzer:
+    """
+    Find semantically similar files based on content.
+    Uses TF-IDF + cosine similarity for ranking.
+    """
+    
+    def __init__(self, repo_root: Path):
+        self.repo_root = repo_root
+        self.vectorizer = TfidfVectorizer(max_features=1000)
+        self._build_index()
+    
+    def _build_index(self):
+        """Index all code files in repository"""
+        self.files = []
+        self.contents = []
+        
+        for ext in ['.py', '.ps1', '.md']:
+            for file in self.repo_root.rglob(f'*{ext}'):
+                if self._should_index(file):
+                    try:
+                        self.files.append(file)
+                        self.contents.append(file.read_text())
+                    except:
+                        pass
+        
+        if self.contents:
+            self.tfidf_matrix = self.vectorizer.fit_transform(self.contents)
+    
+    def _should_index(self, file: Path) -> bool:
+        """Exclude certain paths from indexing"""
+        exclude_patterns = ['.git', '__pycache__', '.venv', 'node_modules']
+        return not any(pattern in str(file) for pattern in exclude_patterns)
+    
+    def find_similar(
+        self,
+        keywords: List[str],
+        top_k: int = 10,
+        threshold: float = 0.3,
+        exclude: Set[Path] = None
+    ) -> List[Path]:
+        """
+        Find files semantically similar to keywords.
+        
+        Args:
+            keywords: Search terms
+            top_k: Maximum results
+            threshold: Minimum similarity score (0.0 - 1.0)
+            exclude: Files to exclude from results
+        """
+        if not keywords or not self.contents:
+            return []
+        
+        # Transform keywords to TF-IDF vector
+        query = ' '.join(keywords)
+        query_vec = self.vectorizer.transform([query])
+        
+        # Compute cosine similarity
+        similarities = cosine_similarity(query_vec, self.tfidf_matrix)[0]
+        
+        # Get top-k results above threshold
+        top_indices = np.argsort(similarities)[::-1][:top_k]
+        results = [
+            self.files[i]
+            for i in top_indices
+            if similarities[i] >= threshold
+            and (exclude is None or self.files[i] not in exclude)
+        ]
+        
+        return results
+```
+
+## Integration with Aider/Claude Code
+
+### Aider Integration
+```python
+# When calling Aider, pass only filtered files
+context = broker.get_context(ContextRequest(
+    task_id="edit_module",
+    task_type="edit",
+    target_files=[Path("core/orchestrator.py")],
+    max_tokens=80000,  # Aider context limit
+    include_dependencies=True
+))
+
+# Build Aider command with filtered files
+aider_cmd = ["aider", "--model", "deepseek"]
+for file in context.files:
+    aider_cmd.extend(["--read", str(file)])
+
+# Log context decision
+logger.info(f"Context: {len(context.files)} files, {context.total_tokens} tokens")
+if context.truncated:
+    logger.warning(f"Context truncated. Excluded {len(context.excluded_files)} files")
+```
+
+### Claude Code Integration
+```python
+# Claude Code has larger context, but still filter
+context = broker.get_context(ContextRequest(
+    task_id="analyze_architecture",
+    task_type="analyze",
+    target_files=[Path("core/")],  # Directory
+    keywords=["plugin", "lifecycle", "event"],
+    max_tokens=150000,  # Claude context limit
+    include_dependencies=True
+))
+
+# Pass context via CLAUDE.md or explicit file list
+# Claude Code reads CLAUDE.md automatically
+```
+
+## Configuration
+
+```yaml
+# .context-broker.yaml
+context_broker:
+  default_max_tokens: 50000
+  
+  task_type_budgets:
+    edit: 80000     # Aider needs more context for edits
+    analyze: 150000 # Claude Code can handle analysis
+    plan: 100000    # Planning needs broad view
+    test: 40000     # Testing focused on one module
+  
+  relevance_threshold: 0.3  # Min score to include
+  
+  exclude_patterns:
+    - ".git/**"
+    - "__pycache__/**"
+    - ".venv/**"
+    - "*.log"
+    - ".runs/**"
+  
+  dependency_depth: 2  # Transitive import depth
+  
+  prioritize_recent: true  # Boost recently modified files
+  prioritize_small: true   # Prefer smaller, focused files
+```
+
+## Testing Requirements
+
+```python
+# tests/test_context_broker.py
+
+def test_token_budget_enforcement():
+    broker = ContextBroker(repo_root=Path("."))
+    request = ContextRequest(
+        task_id="test",
+        target_files=[Path("large_file.py")],  # 100k tokens
+        max_tokens=50000
+    )
+    result = broker.get_context(request)
+    
+    # Mandatory files included even if over budget
+    assert Path("large_file.py") in result.files
+    assert result.truncated == True
+    assert result.total_tokens <= 150000  # Hard limit
+
+def test_dependency_inclusion():
+    broker = ContextBroker(repo_root=Path("."))
+    request = ContextRequest(
+        task_id="test",
+        target_files=[Path("core/orchestrator.py")],
+        include_dependencies=True
+    )
+    result = broker.get_context(request)
+    
+    # Should include plugin_loader.py (imported by orchestrator)
+    assert Path("core/plugin_loader.py") in result.files
+
+def test_semantic_search():
+    broker = ContextBroker(repo_root=Path("."))
+    request = ContextRequest(
+        task_id="test",
+        target_files=[],
+        keywords=["plugin", "lifecycle", "event"]
+    )
+    result = broker.get_context(request)
+    
+    # Should find plugin-related files
+    assert any("plugin" in str(f).lower() for f in result.files)
+```
+
+---
+
+## Change Log
+- **1.0.0** — 2025-11-02 — Initial context broker contract
