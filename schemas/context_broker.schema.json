@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acms.example.com/schemas/context_broker.schema.json",
+  "title": "ACMS Context Broker Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["context_broker"],
+  "properties": {
+    "context_broker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "budgets",
+        "strategy",
+        "chunking",
+        "provider_windows",
+        "category_caps",
+        "pin_globs",
+        "ban_globs",
+        "emit_manifest"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_tokens", "max_files"],
+          "properties": {
+            "max_tokens": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_files": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "strategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pipeline", "weights"],
+          "properties": {
+            "pipeline": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "structural",
+                  "lexical",
+                  "recency",
+                  "size_penalty",
+                  "vector",
+                  "custom"
+                ]
+              }
+            },
+            "weights": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "structural": {"type": "number"},
+                "lexical": {"type": "number"},
+                "recency": {"type": "number"},
+                "size_penalty": {"type": "number"},
+                "vector": {"type": "number"},
+                "custom": {"type": "number"}
+              }
+            }
+          }
+        },
+        "chunking": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["chunk_tokens", "overlap_tokens", "dedupe_by_sha256"],
+          "properties": {
+            "chunk_tokens": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "overlap_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "dedupe_by_sha256": {
+              "type": "boolean"
+            }
+          }
+        },
+        "provider_windows": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "category_caps": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "tests", "docs"],
+          "properties": {
+            "code": {"type": "integer", "minimum": 0},
+            "tests": {"type": "integer", "minimum": 0},
+            "docs": {"type": "integer", "minimum": 0}
+          }
+        },
+        "pin_globs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "ban_globs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "emit_manifest": {
+          "type": "boolean"
+        },
+        "default_include_tests": {
+          "type": "boolean"
+        },
+        "default_task_type": {
+          "type": "string",
+          "enum": ["edit", "plan", "analyze", "test"]
+        }
+      }
+    }
+  }
+}
