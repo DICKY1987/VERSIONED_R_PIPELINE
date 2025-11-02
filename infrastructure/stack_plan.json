@@ -1,0 +1,12 @@
+{
+  "environment": "dev",
+  "resources": {
+    "instance": "acms-runner-dev",
+    "security_group": "acms-sg-dev"
+  },
+  "tags": {
+    "Environment": "dev",
+    "ManagedBy": "Pulumi",
+    "Project": "acms"
+  }
+}
