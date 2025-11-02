@@ -1,0 +1,27 @@
+# Git Attributes Configuration
+# Version: 1.0.0
+# Date: 2025-11-02
+
+# Normalize line endings for text assets
+*.md text eol=lf diff=markdown
+*.txt text eol=lf diff=plain
+*.yaml text eol=lf merge=union
+*.yml text eol=lf merge=union
+*.json text eol=lf merge=union
+*.py text eol=lf diff=python
+*.ps1 text eol=lf diff=plain
+*.sh text eol=lf diff=sh
+
+# Deterministic handling for generated metadata
+*.lock merge=ours
+poetry.lock merge=ours
+
+# Binary assets should never be merged as text
+*.docx binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.zip binary
+
+# Git LFS placeholders (retain text semantics)
+*.jsonl text eol=lf

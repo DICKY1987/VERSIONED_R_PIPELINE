@@ -1,0 +1,74 @@
+# Documentation Tagging Workflow
+# Version: 1.0.0
+# Based on: VERSIONING_OPERATING_CONTRACT.md
+name: Per-doc tags
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**/*.md'
+      - 'plans/**/*.md'
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: python -m pip install python-frontmatter pyyaml
+
+      - name: Tag changed docs
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import os, subprocess, frontmatter
+
+          def sh(cmd: str) -> str:
+              return subprocess.check_output(cmd, shell=True, text=True).strip()
+
+          before = os.environ["BEFORE"]
+          after = os.environ["AFTER"]
+
+          diff_cmd = f"git diff --name-only {before} {after} -- 'docs/**/*.md' 'plans/**/*.md'"
+          files = sh(diff_cmd).splitlines()
+          if not files:
+              raise SystemExit(0)
+
+          created = []
+          for path in files:
+              try:
+                  text = open(path, "r", encoding="utf-8").read()
+              except FileNotFoundError:
+                  continue
+
+              post = frontmatter.loads(text)
+              meta = post.metadata or {}
+              doc_key = meta.get("doc_key")
+              semver = meta.get("semver")
+              if not doc_key or not semver:
+                  print(f"Skipping {path}: missing doc_key or semver")
+                  continue
+
+              tag = f"docs-{doc_key}-{semver}"
+              existing = sh(f"git tag --list '{tag}'")
+              if not existing:
+                  sh(f"git tag -a {tag} -m 'Snapshot {doc_key} v{semver} from {after[:7]}'")
+                  created.append(tag)
+
+          if created:
+              print("Creating tags:", created)
+              sh("git push --tags")
+          PY

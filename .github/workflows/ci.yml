@@ -1,0 +1,132 @@
+# ACMS CI Pipeline
+# Version: 1.0.0
+# Date: 2025-11-02
+# Owner: Platform.Engineering
+name: ACMS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  lint-and-test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            black \
+            pytest \
+            ruff
+
+      - name: Detect Python sources
+        id: detect_python
+        run: |
+          if git ls-files '*.py' > python_files.txt && [ -s python_files.txt ]; then
+            echo "has_python=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_python=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Black (check mode)
+        if: steps.detect_python.outputs.has_python == 'true'
+        run: black --check .
+
+      - name: Ruff lint
+        if: steps.detect_python.outputs.has_python == 'true'
+        run: ruff check .
+
+      - name: Run pytest
+        if: steps.detect_python.outputs.has_python == 'true'
+        run: pytest -v
+
+  type-check:
+    name: Static Type Checking
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install mypy
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install mypy
+
+      - name: Detect Python sources
+        id: detect_python
+        run: |
+          if git ls-files '*.py' > python_files.txt && [ -s python_files.txt ]; then
+            echo "has_python=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_python=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run mypy
+        if: steps.detect_python.outputs.has_python == 'true'
+        run: |
+          mypy $(git ls-files '*.py')
+
+  security-scans:
+    name: Security and Secrets Scans
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Bandit
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install bandit
+
+      - name: Detect Python sources
+        id: detect_python
+        run: |
+          if git ls-files '*.py' > python_files.txt && [ -s python_files.txt ]; then
+            echo "has_python=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_python=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Bandit
+        if: steps.detect_python.outputs.has_python == 'true'
+        run: bandit -r .
+
+      - name: Scan for secrets with Gitleaks
+        uses: zricethezav/gitleaks-action@v2
+        with:
+          args: "--no-git -v"

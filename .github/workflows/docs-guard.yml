@@ -1,0 +1,137 @@
+# Documentation Versioning Guard
+# Version: 1.0.0
+# Based on: VERSIONING_OPERATING_CONTRACT.md
+name: docs-guard
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    paths:
+      - 'docs/**/*.md'
+      - 'plans/**/*.md'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: python -m pip install python-frontmatter pyyaml semver
+
+      - name: Validate changed docs
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python - <<'PY'
+          import os, subprocess, sys, re
+          import frontmatter, yaml, semver
+
+          def shell(cmd: str) -> str:
+              return subprocess.check_output(cmd, shell=True, text=True).strip()
+
+          base = os.environ["BASE_SHA"]
+          head = os.environ["HEAD_SHA"]
+          pr_title = os.environ.get("PR_TITLE", "")
+
+          diff_cmd = f"git diff --name-only {base} {head} -- 'docs/**/*.md' 'plans/**/*.md'"
+          files = shell(diff_cmd).splitlines()
+          if not files:
+              sys.exit(0)
+
+          title = pr_title.lower()
+          wants_major = "breaking change" in title or re.match(r'^(breaking|feat!)', title)
+          wants_minor = title.startswith("feat") and not wants_major
+
+          errors = []
+          warnings = []
+
+          def parse(blob: str):
+              if not blob:
+                  return None, None
+              post = frontmatter.loads(blob)
+              meta = post.metadata or {}
+              return meta, post.content
+
+          for path in files:
+              try:
+                  old_blob = shell(f"git show {base}:{path}")
+              except subprocess.CalledProcessError:
+                  old_blob = ""
+              try:
+                  new_blob = shell(f"git show {head}:{path}")
+              except subprocess.CalledProcessError:
+                  new_blob = open(path, "r", encoding="utf-8").read()
+
+              old_meta, _ = parse(old_blob)
+              new_meta, _ = parse(new_blob)
+
+              if not new_meta or not new_meta.get("doc_key") or not new_meta.get("semver"):
+                  errors.append(f"{path}: missing required front matter fields (doc_key, semver).")
+                  continue
+
+              try:
+                  new_v = semver.Version.parse(str(new_meta["semver"]))
+              except Exception:
+                  errors.append(f"{path}: invalid semver '{new_meta.get('semver')}'.")
+                  continue
+
+              if old_meta and old_meta.get("semver"):
+                  try:
+                      old_v = semver.Version.parse(str(old_meta["semver"]))
+                  except Exception:
+                      errors.append(f"{path}: invalid previous semver '{old_meta.get('semver')}'.")
+                      continue
+
+                  if new_v <= old_v:
+                      errors.append(f"{path}: semver must increase (old {old_v} -> new {new_v}).")
+
+                  bump = "patch"
+                  if new_v.major > old_v.major:
+                      bump = "major"
+                  elif new_v.minor > old_v.minor:
+                      bump = "minor"
+
+                  if wants_major and bump != "major":
+                      errors.append(f"{path}: PR suggests BREAKING change but bump is {bump}. Require MAJOR.")
+                  if wants_minor and bump == "patch":
+                      errors.append(f"{path}: PR suggests a feature but bump is PATCH. Require MINOR or MAJOR.")
+
+                  if (new_meta.get("contract_type") == "execution_contract") and bump == "minor":
+                      errors.append(f"{path}: execution_contract changes must be MAJOR or PATCH, not MINOR.")
+
+                  if old_meta.get("effective_date") == new_meta.get("effective_date") and bump in ("minor", "major"):
+                      warnings.append(f"{path}: consider updating effective_date for {bump} changes.")
+
+                  supersedes = new_meta.get("supersedes_version")
+                  if supersedes:
+                      try:
+                          supersedes_v = semver.Version.parse(str(supersedes))
+                          if supersedes_v != old_v:
+                              warnings.append(f"{path}: supersedes_version '{supersedes}' does not match prior version '{old_v}'.")
+                      except Exception:
+                          errors.append(f"{path}: invalid supersedes_version '{supersedes}'.")
+              else:
+                  if new_v < semver.Version.parse("1.0.0"):
+                      errors.append(f"{path}: new docs should start at 1.0.0 or higher.")
+
+              status = new_meta.get("status")
+              if status and status not in {"active", "deprecated", "frozen"}:
+                  errors.append(f"{path}: status must be active|deprecated|frozen.")
+
+          for warning in warnings:
+              print(f"::warning::{warning}")
+          if errors:
+              for error in errors:
+                  print(f"::error::{error}")
+              sys.exit(1)
+          PY
