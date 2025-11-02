@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/context_broker.schema.json",
+  "title": "Context Broker Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "doc_key",
+    "semver",
+    "status",
+    "effective_date",
+    "owner",
+    "contract_type",
+    "context_broker"
+  ],
+  "properties": {
+    "doc_key": {
+      "type": "string",
+      "const": "CONTEXT_BROKER"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z\\.-]+)?$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "draft",
+        "deprecated"
+      ]
+    },
+    "effective_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "supersedes_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contract_type": {
+      "type": "string",
+      "enum": [
+        "policy",
+        "contract"
+      ]
+    },
+    "context_broker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "strategy",
+        "chunking",
+        "provider_windows",
+        "category_caps",
+        "pin_globs",
+        "ban_globs",
+        "emit_manifest"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_tokens": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_files": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "strategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pipeline",
+            "weights"
+          ],
+          "properties": {
+            "pipeline": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "weights": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "lexical": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "vector": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "structural": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "recency": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "size_penalty": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "chunking": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "chunk_tokens",
+            "overlap_tokens",
+            "dedupe_by_sha256"
+          ],
+          "properties": {
+            "chunk_tokens": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "overlap_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "dedupe_by_sha256": {
+              "type": "boolean"
+            }
+          }
+        },
+        "provider_windows": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "category_caps": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tests": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "docs": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "pin_globs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "ban_globs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "emit_manifest": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "doc_key": "EXECUTION_STATE_MACHINE",
+  "semver": "1.0.0",
+  "status": "active",
+  "effective_date": "2025-11-02",
+  "supersedes_version": null,
+  "owner": "Platform.Engineering",
+  "contract_type": "policy",
+  "states": {
+    "PENDING": {
+      "description": "Task defined but not started",
+      "allowed_transitions": [
+        "RUNNING",
+        "SKIPPED",
+        "CANCELLED"
+      ]
+    },
+    "RUNNING": {
+      "description": "Task currently executing",
+      "allowed_transitions": [
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED"
+      ]
+    },
+    "COMPLETED": {
+      "description": "Task finished successfully",
+      "allowed_transitions": []
+    },
+    "FAILED": {
+      "description": "Task failed; may be retried",
+      "allowed_transitions": [
+        "PENDING"
+      ]
+    },
+    "SKIPPED": {
+      "description": "Task skipped by condition",
+      "allowed_transitions": []
+    },
+    "CANCELLED": {
+      "description": "Task cancelled",
+      "allowed_transitions": []
+    }
+  },
+  "task_graph": {
+    "version": "1.0.0",
+    "tasks": [
+      {
+        "id": "task_001_preflight",
+        "dependencies": [],
+        "priority": 1
+      },
+      {
+        "id": "task_002_fetch",
+        "dependencies": [
+          "task_001_preflight"
+        ],
+        "priority": 2
+      },
+      {
+        "id": "task_003_plan",
+        "dependencies": [
+          "task_002_fetch"
+        ],
+        "priority": 3
+      },
+      {
+        "id": "task_004_worktree_a",
+        "dependencies": [
+          "task_003_plan"
+        ],
+        "priority": 4,
+        "parallel_group": "worktrees"
+      },
+      {
+        "id": "task_005_worktree_b",
+        "dependencies": [
+          "task_003_plan"
+        ],
+        "priority": 4,
+        "parallel_group": "worktrees"
+      },
+      {
+        "id": "task_006_merge_prep",
+        "dependencies": [
+          "task_004_worktree_a",
+          "task_005_worktree_b"
+        ],
+        "priority": 5
+      }
+    ]
+  }
+}
