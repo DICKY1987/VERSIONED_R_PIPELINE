@@ -1,15 +1,24 @@
 """
 Pytest Configuration
-Version: 1.0.0
+Version: 1.1.0
 Date: 2025-11-02
-Shared fixtures and configuration
+Owner: Platform.Engineering
+
+Shared fixtures and configuration for all test modules.
+Ensures repository root is in sys.path for core package imports.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Dict, List
 
 import pytest
+
+# Add repository root to Python path for core package imports
+repo_root = Path(__file__).resolve().parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
 
 @pytest.fixture(scope="session")
