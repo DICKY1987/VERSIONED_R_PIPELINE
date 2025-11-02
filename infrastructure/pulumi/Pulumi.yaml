@@ -1,0 +1,10 @@
+# Pulumi Project Configuration
+# Version: 1.0.0
+# Date: 2025-11-02
+name: acms-infrastructure
+runtime:
+  name: python
+  options:
+    virtualenv: venv
+config:
+  acms-infrastructure:environment: dev
