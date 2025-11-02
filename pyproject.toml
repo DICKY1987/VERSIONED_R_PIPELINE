@@ -1,0 +1,45 @@
+# ACMS Configuration
+# Version: 1.0.0
+# Generated: 2025-11-02
+# Owner: Platform.Engineering
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acms"
+version = "0.1.0"
+description = "Autonomous Code Modification System core package"
+authors = [
+  { name = "Platform Engineering", email = "platform@example.com" }
+]
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = []
+
+[tool.setuptools]
+package-dir = {"" = ""}
+packages = ["core"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
