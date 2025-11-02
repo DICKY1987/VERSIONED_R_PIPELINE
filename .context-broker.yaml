@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 Platform.Engineering
+# Version: 1.0.0
+# Last Modified: 2025-11-02
+# Title: Context Broker Configuration
+context_broker:
+  version: "1.1.0"
+  description: "Deterministic configuration for ACMS context selection"
+  budgets:
+    max_tokens: 180000
+    max_files: 180
+  strategy:
+    pipeline:
+      - structural
+      - lexical
+      - recency
+      - size_penalty
+    weights:
+      structural: 0.35
+      lexical: 0.35
+      recency: 0.2
+      size_penalty: 0.1
+  chunking:
+    chunk_tokens: 800
+    overlap_tokens: 80
+    dedupe_by_sha256: true
+  provider_windows:
+    aider: 80000
+    claude_code: 180000
+  category_caps:
+    code: 80
+    tests: 40
+    docs: 20
+  pin_globs:
+    - "core/**"
+    - "tools/**"
+  ban_globs:
+    - "**/.git/**"
+    - "**/.runs/**"
+    - "**/__pycache__/**"
+    - "**/*.pem"
+    - "**/secrets/**"
+    - "**/.tox/**"
+  emit_manifest: true
+  default_include_tests: true
+  default_task_type: "edit"
