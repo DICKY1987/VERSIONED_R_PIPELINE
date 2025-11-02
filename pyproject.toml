@@ -1,5 +1,5 @@
 # ACMS Configuration
-# Version: 1.0.0
+# Version: 1.1.0
 # Generated: 2025-11-02
 # Owner: Platform.Engineering
 
@@ -23,6 +23,19 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-mock>=3.11.0",
+    "pytest-timeout>=2.1.0",
+    "black>=23.0",
+    "ruff>=0.1.0",
+    "isort>=5.12.0",
+    "mypy>=1.5",
+    "pylint>=3.0",
+]
+
 [tool.setuptools]
 package-dir = {"" = ""}
 packages = ["core"]
@@ -38,8 +51,33 @@ select = ["E", "F", "I", "W"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra -q"
-testpaths = ["tests"]
+addopts = "-ra -q -v"
+testpaths = [
+    "tests",
+    "immediate CI enforcement and reproducibility"
+]
+pythonpath = "."
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+
+[tool.coverage.run]
+source = ["core"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
