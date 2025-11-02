@@ -1,0 +1,23 @@
+# MkDocs Configuration
+# Version: 1.0.0
+# Date: 2025-11-02
+# Owner: Platform.Engineering
+site_name: ACMS Documentation
+site_description: "Autonomous Code Modification System documentation portal"
+site_author: Platform.Engineering
+repo_url: "https://example.com/acms"
+docs_dir: docs
+site_dir: site
+use_directory_urls: false
+nav:
+  - Overview: index.md
+  - Operating Contract: OPERATING_CONTRACT.md
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+plugins:
+  - search
+extra:
+  product: ACMS
+  generated: true
