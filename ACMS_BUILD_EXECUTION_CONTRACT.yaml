@@ -1,0 +1,332 @@
+---
+doc_key: ACMS_BUILD_EXECUTION_CONTRACT
+semver: 2.0.0
+contract_type: execution_contract
+title: "ACMS — Unified Build Manifest (Executive Summary + Supplemental Plan)"
+effective_date: 2025-11-02
+owner: Platform.Engineering
+status: active
+
+sources:
+  - name: ACMS_EXECUTIVE_SUMMARY.md
+    version: 2.0.0
+    notes: Architecture, phases, gates, security, governance, performance, success metrics.
+  - name: Supplemental Development Plan for ACMS_EXECUTIVE_SUMMARY.docx
+    version: 1.0.0
+    notes: Full deliverables manifest (58 files), grouped by phases.
+
+objectives:
+  - Build a fully autonomous, deterministic code-modification system (ACMS) that plans, executes, validates, and PRs changes end-to-end.
+  - Preserve strict governance (versioning/front matter), observability (OpenTelemetry + JSONL ledger), and safety gates (lint/test/security).
+
+principles:
+  determinism:
+    rule: "Same input + same environment → same output."
+    constraints:
+      - "No hidden state; no ambient config; everything versioned."
+  observability:
+    rule: "Every op is traceable."
+    mechanisms:
+      - "OpenTelemetry tracing, JSONL append-only ledger, ULIDs for correlation."
+  isolation:
+    rule: "Concurrency without interference."
+    mechanisms:
+      - "Git worktrees, Nox sessions, independent validation."
+  safety:
+    rule: "Defense-in-depth."
+    mechanisms:
+      - "SafePatch fences, quality gates, retries (<=3), rollback via git."
+  test_driven:
+    rule: "TDD + TDI; 80%+ coverage; BDD for workflows."
+
+performance_targets:
+  throughput:
+    planning_sec: "30-60"
+    execution_per_worktree_min: "2-5"
+    validation_min: "1-3"
+    total_run_min: "5-15"
+  resources:
+    memory_gb_per_worktree: "2-4"
+    cpu_cores: "2-4"
+    disk_per_run_mb: 500
+    network: "Minimal (LLM API calls)"
+  scalability:
+    concurrent_worktrees: "5-10 (hw-dependent)"
+    plugin_limit: "unlimited (dynamic discovery)"
+    trace_retention_days: 30
+    ledger_growth_estimate: "~1MB / 1000 ops"
+
+security:
+  threat_model:
+    - malicious_code_injection: { mitigated_by: ["quality_gates"] }
+    - secret_exposure: { mitigated_by: ["gitleaks"] }
+    - unauthorized_access: { mitigated_by: ["scoped_tokens"] }
+    - dependency_vulns: { mitigated_by: ["bandit","pip-audit"] }
+  controls_checklist:
+    - input_validation
+    - secret_scanning_gitleaks
+    - dependency_audit_pip_audit
+    - least_privilege_tokens
+    - audit_logging_jsonl
+    - optional_human_code_review
+
+governance:
+  versioning_standard: "VERSIONING_OPERATING_CONTRACT.md (YAML front matter + SemVer + per-doc tags)"
+  contract_types:
+    - policy
+    - intent
+    - execution_contract
+  approval_matrix:
+    patch: "Any team member"
+    minor: "Document owner"
+    major: "Owner + Compliance"
+    execution_contract: "Owner + PMO + Compliance"
+
+success_gates:
+  per_phase:
+    - "Unit + integration + infra tests pass (>=80% coverage)"
+    - "Lint/format/security scans clean"
+    - "Docs generated if applicable"
+    - "CI green; PR automation verified"
+    - "Jaeger shows end-to-end trace"
+    - "JSONL ledger complete"
+  production_readiness:
+    - "Docs complete (API + ops)"
+    - "Monitoring dashboards configured"
+    - "Rollback procedures tested"
+    - "Security scans (no high/critical)"
+    - "Perf benchmarks met"
+    - "Disaster recovery documented"
+
+toolchain:
+  runtimes:
+    python: "3.11+"
+    powershell: "7+"
+  dev_automation:
+    - nox
+  linting:
+    - black
+    - ruff
+    - mypy
+    - pylint
+  testing:
+    - pytest
+    - pytest-testinfra
+    - behave/gherkin (for BDD features)
+  security_scan:
+    - bandit
+    - gitleaks
+  observability:
+    - opentelemetry
+    - jaeger
+  ci_cd:
+    - "GitHub Actions for CI; docs-guard + doc-tags workflows"
+  vcs:
+    - git
+    - CODEOWNERS
+    - .gitattributes
+
+templates:
+  yaml_front_matter_doc: |
+    ---
+    doc_key: ${doc_key}
+    semver: ${semver}
+    status: active
+    effective_date: ${date}
+    owner: ${owner}
+    ${extra}
+    ---
+  license_header: |
+    # SPDX-License-Identifier: MIT
+    # Copyright (c) ${year} ${org}
+    # Version: ${semver}
+    # Last Modified: ${date}
+  python_header: |
+    """
+    ${title}
+    Version: ${semver}
+    Date: ${date}
+    Owner: ${owner}
+    ${extra}
+    """
+  ps_header: |
+    <#
+    .SYNOPSIS
+        ${synopsis}
+    .VERSION
+        ${semver}
+    .DATE
+        ${date}
+    .OWNER
+        ${owner}
+    #>
+  gh_workflow_header: |
+    # ${title}
+    # Version: ${semver}
+    # Date: ${date}
+    name: ${name}
+  docker_compose_header: |
+    # ${title}
+    # Version: ${semver}
+    # Date: ${date}
+    version: "3.8"
+
+# Phases from the Executive Summary timeline (32 total days)
+phases:
+  - id: 1
+    name: "Foundation & Core Infrastructure"
+    duration_days: 2
+    milestone: "Git repo, IaC, contracts established"
+    files:
+      - {path: ".gitignore", action: create, purpose: "VCS hygiene", template_id: null}
+      - {path: "LICENSE", action: create, template_id: license_header, params: {org: "Organization Name"}}
+      - {path: "README.md", action: create, template_id: yaml_front_matter_doc, params: {doc_key: "ACMS_README"}}
+      - {path: "pyproject.toml", action: create, template_id: python_header, params: {title: "ACMS Configuration"}}
+      - {path: "requirements.txt", action: create, template_id: license_header, params: {title: "ACMS Dependencies"}}
+      - {path: "noxfile.py", action: create, template_id: python_header, params: {title: "ACMS Nox Configuration"}}
+      - {path: "core/__init__.py", action: create, template_id: python_header, params: {title: "ACMS Core Module", extra: "__version__ = \"1.0.0\""}}
+      - {path: "core/config.py", action: create, template_id: python_header, params: {title: "ACMS Configuration Management"}}
+      - {path: ".env.example", action: create, template_id: license_header, params: {title: "Env Vars Template"}}
+      - {path: "docker-compose.yml", action: create, template_id: docker_compose_header, params: {title: "ACMS Docker Compose"}}
+  - id: 2
+    name: "State Machine & Orchestration"
+    duration_days: 3
+    milestone: "Orchestration framework complete"
+    files:
+      - {path: "core/state_machine.py", action: create, template_id: python_header, params: {title: "ACMS Execution State Machine", extra: "Implements: EXECUTION_STATE_MACHINE_CONTRACT.yaml"}}
+      - {path: "core/task_scheduler.py", action: create, template_id: python_header, params: {title: "Task Scheduler — DAG Toposort"}}
+      - {path: "core/orchestrator.py", action: create, template_id: python_header, params: {title: "Main Pipeline Orchestrator"}}
+      - {path: "schemas/execution_state_machine.schema.json", action: create, template_id: null, purpose: "JSON Schema for state machine"}
+      - {path: "tests/test_state_machine.py", action: create, template_id: python_header, params: {title: "State Machine Unit Tests", extra: "Coverage Target: 80%+"}}
+      - {path: "tests/test_toposort.py", action: create, template_id: python_header, params: {title: "Topological Sort Tests", extra: "Cycle detection + ordering"}}
+  - id: 3
+    name: "Plugin Architecture"
+    duration_days: 5
+    milestone: "Plugin system operational"
+    files:
+      - {path: "core/plugin_loader.py", action: create, template_id: python_header, params: {title: "Plugin Discovery & Loading"}}
+      - {path: "plugins/__init__.py", action: create, template_id: python_header, params: {title: "Plugins Module"}}
+      - {path: "core/Generate-PluginScaffold.ps1", action: create, template_id: ps_header, params: {synopsis: "Plugin Scaffold Generator"}}
+      - {path: "core/Validate-Plugin.ps1", action: create, template_id: ps_header, params: {synopsis: "Plugin Validator"}}
+      - {path: "scripts/generate_plugin_scaffold.py", action: create, template_id: python_header, params: {title: "Plugin Scaffold Generator (Python)"}}
+      - {path: "scripts/validate_plugin.py", action: create, template_id: python_header, params: {title: "Plugin Validator (Python)"}}
+  - id: 4
+    name: "LLM Tool Integration"
+    duration_days: 3
+    milestone: "Aider & Claude Code integrated"
+    files:
+      - {path: "tools/context_broker.py", action: create, template_id: python_header, params: {title: "ACMS Context Broker", extra: "Contract: CONTEXT_BROKER_CONTRACT.yaml"}}
+      - {path: "schemas/context_broker.schema.json", action: create, template_id: null, purpose: "JSON Schema for context broker contract"}
+      - {path: "core/context/dispatcher.py", action: create, template_id: python_header, params: {title: "LLM Tool Dispatcher", extra: "Integrates: Aider, Claude Code CLI"}}
+      - {path: ".context-broker.yaml", action: create, template_id: license_header, params: {title: "Context Broker Configuration"}}
+  - id: 5
+    name: "Code Gate & Validation"
+    duration_days: 4
+    milestone: "Quality gates functioning"
+    files:
+      - {path: "core/validation/code_gate.py", action: create, template_id: python_header, params: {title: "Code Gate — Validation Router", extra: "Routes approved/rejected by gates"}}
+      - {path: "core/validation/linters.py", action: create, template_id: python_header, params: {title: "Linting Integration", extra: "Black/Ruff/mypy/pylint"}}
+      - {path: "core/validation/security_scanner.py", action: create, template_id: python_header, params: {title: "Security Scanning", extra: "bandit + gitleaks"}}
+      - {path: ".ruff.toml", action: create, template_id: license_header, params: {title: "Ruff Config"}}
+      - {path: "pyproject.toml", action: modify, template_id: null, purpose: "Add [tool.black] + [tool.mypy] sections"}
+  - id: 6
+    name: "Worktree Management"
+    duration_days: 2
+    milestone: "Isolation mechanism working"
+    files:
+      - {path: "core/worktree/manager.py", action: create, template_id: python_header, params: {title: "Git Worktree Manager"}}
+      - {path: "core/worktree/sync.py", action: create, template_id: python_header, params: {title: "Worktree Synchronization"}}
+      - {path: "tests/test_worktree.py", action: create, template_id: python_header, params: {title: "Worktree Management Tests", extra: "Isolation + sync"}}
+  - id: 7
+    name: "Observability & Tracing"
+    duration_days: 3
+    milestone: "Full tracing & logging"
+    files:
+      - {path: "core/observability/tracing.py", action: create, template_id: python_header, params: {title: "OpenTelemetry Integration", extra: "Distributed tracing setup"}}
+      - {path: "core/observability/ledger.py", action: create, template_id: python_header, params: {title: "JSONL Ledger Writer", extra: "Append-only audit logging"}}
+      - {path: "core/observability/ulid_generator.py", action: create, template_id: python_header, params: {title: "ULID Generator", extra: "Unique, sortable IDs"}}
+      - {path: "docker/jaeger/docker-compose.yml", action: create, template_id: docker_compose_header, params: {title: "Jaeger Deployment"}}
+  - id: 8
+    name: "CI/CD Integration"
+    duration_days: 2
+    milestone: "Automated validation pipeline"
+    files:
+      - {path: ".github/workflows/ci.yml", action: create, template_id: gh_workflow_header, params: {title: "ACMS CI Pipeline", name: "ACMS CI"}}
+      - {path: ".github/workflows/docs-guard.yml", action: create, template_id: gh_workflow_header, params: {title: "Documentation Versioning Guard", name: "docs-guard"}}
+      - {path: ".github/workflows/doc-tags.yml", action: create, template_id: gh_workflow_header, params: {title: "Documentation Tagging Workflow", name: "Per-doc tags"}}
+      - {path: ".github/CODEOWNERS", action: create, template_id: license_header, params: {title: "ACMS Code Ownership"}}
+      - {path: ".gitattributes", action: create, template_id: license_header, params: {title: "Git Attributes Configuration"}}
+  - id: 9
+    name: "Testing & Validation"
+    duration_days: 4
+    milestone: "Comprehensive test suite"
+    files:
+      - {path: "tests/conftest.py", action: create, template_id: python_header, params: {title: "Pytest Configuration", extra: "Shared fixtures"}}
+      - {path: "tests/integration/test_workflow_execution.py", action: create, template_id: python_header, params: {title: "Workflow Execution Integration Tests", extra: "End-to-end pipeline"}}
+      - {path: "tests/integration/test_plugin_integration.py", action: create, template_id: python_header, params: {title: "Plugin Integration Tests"}}
+      - {path: "features/file_deduplication.feature", action: create, template_id: license_header, params: {title: "BDD Feature: File Deduplication"}}
+      - {path: "features/steps/deduplication_steps.py", action: create, template_id: python_header, params: {title: "BDD Step Definitions"}}
+  - id: 10
+    name: "Documentation Generation"
+    duration_days: 2
+    milestone: "Auto-generated docs"
+    files:
+      - {path: "mkdocs.yml", action: create, template_id: license_header, params: {title: "MkDocs Configuration"}}
+      - {path: "docs/index.md", action: create, template_id: yaml_front_matter_doc, params: {doc_key: "ACMS_DOCS_INDEX"}}
+      - {path: "docs/OPERATING_CONTRACT.md", action: create, template_id: yaml_front_matter_doc, params: {doc_key: "ACMS_OC", extra: "contract_type: policy"}}
+      - {path: "scripts/generate_docs.py", action: create, template_id: python_header, params: {title: "Documentation Generator", extra: "Auto-generate API docs"}}
+  - id: 11
+    name: "Deployment & Operations"
+    duration_days: 2
+    milestone: "Production-ready runner"
+    files:
+      - {path: "core/runner.py", action: create, template_id: python_header, params: {title: "ACMS Production Runner", extra: "Entry point: production"}}
+      - {path: "infrastructure/pulumi/__main__.py", action: create, template_id: python_header, params: {title: "Pulumi IaC"}}
+      - {path: "infrastructure/pulumi/Pulumi.yaml", action: create, template_id: license_header, params: {title: "Pulumi Project Configuration", extra: "name: acms-infrastructure"}}
+      - {path: "infrastructure/tests/test_infrastructure.py", action: create, template_id: python_header, params: {title: "Infrastructure Tests (TDI)", extra: "pytest-testinfra"}}
+      - {path: "scripts/deploy.sh", action: create, template_id: license_header, params: {title: "ACMS Deployment Script"}}
+      - {path: ".github/pull_request_template.md", action: create, template_id: null, purpose: "PR checklist & metadata block"}
+
+dependencies:
+  # Phase ordering is strictly sequential; topo constraints enforce dag across steps
+  - edge: {from: 1, to: 2}
+  - edge: {from: 2, to: 3}
+  - edge: {from: 3, to: 4}
+  - edge: {from: 4, to: 5}
+  - edge: {from: 5, to: 6}
+  - edge: {from: 6, to: 7}
+  - edge: {from: 7, to: 8}
+  - edge: {from: 8, to: 9}
+  - edge: {from: 9, to: 10}
+  - edge: {from: 10, to: 11}
+
+validation:
+  coverage_min_percent: 80
+  gates:
+    lint: ["black","ruff","mypy","pylint"]
+    test: ["pytest","pytest-testinfra"]
+    security: ["bandit","gitleaks"]
+    docs: ["mkdocs build"]
+    ci: ["github actions"]
+  routing:
+    approved_dir: ".runs/approved"
+    rejected_dir: ".runs/rejected"
+    retries_max: 3
+
+observability:
+  trace:
+    provider: "OpenTelemetry"
+    sink: "Jaeger"
+  ledger:
+    format: "jsonl"
+    retention_days: 30
+  ids:
+    kind: "ULID"
+    usage: "Trace correlation, file attributions"
+
+execution_instructions_for_ai:
+  - "Execute phases in order; do not skip."
+  - "After each file creation/modification, run lint + unit tests; after each phase, run integration tests + CI."
+  - "Emit ULID + TraceID for each operation; append JSONL ledger entries."
+  - "Open PR automatically after green CI; attach artifacts and docs."
+  - "Honor CODEOWNERS and branch protection."
